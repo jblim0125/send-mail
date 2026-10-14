@@ -1,0 +1,13 @@
+# 배포 패키지가 아니다. Tool 모듈은 Sandbox 이미지에 들어가며 외부 패키지를 쓰지 않는다.
+# 아래 의존성은 로컬 개발·테스트 전용이다: pip install --group dev
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "aiosmtpd==1.4.6",
+    "trustme==1.2.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

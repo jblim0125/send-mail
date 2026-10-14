@@ -1,0 +1,14 @@
+# 로컬 conda 환경. 만든 위치의 경로가 고정되므로 각자 만든다 (docs/interface.md 8.1)
+.conda/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 앱 비밀번호 등 비밀값을 담을 수 있는 파일 (scripts/gmail_integration.py 는 환경 변수로도 받는다)
+.env
+.env.*
+
+# macOS
+.DS_Store
