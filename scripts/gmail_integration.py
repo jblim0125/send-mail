@@ -1,4 +1,4 @@
-"""Gmail 실서비스 통합 시험 (docs/후속과제.md F-04).
+"""Gmail 실서비스 통합 시험 (docs/follow-ups.md F-04).
 
 실제 Gmail SMTP 서버(smtp.gmail.com)로 메일 발송 Tool 을 시험한다. 고른 항목에 따라 실제로 메일이 발송된다.
 
@@ -44,10 +44,9 @@ SCENARIOS = {
     "2": "텍스트 메일 발송",
     "3": "HTML 메일 발송 (한글 제목, 표시 이름, 숨은 참조)",
     "4": "로그인 실패: 일부러 틀린 비밀번호 (메일을 보내지 않음)",
-    "5": "계정과 다른 발신 주소로 발송 (Gmail 의 From 재작성 확인)",
-    "6": "없는 Gmail 주소로 발송 (수신자 거부·반송 확인)",
+    "5": "없는 Gmail 주소로 발송 (수신자 거부·반송 확인)",
 }
-SENDING = {"2", "3", "5", "6"}
+SENDING = {"2", "3", "5"}
 DEFAULT_SCENARIOS = "1,2,4"
 
 # 실행 뒤 사람이 직접 확인할 것 (F-04 검증 항목)
@@ -56,8 +55,7 @@ FOLLOW_UP = {
     "3": "HTML·표시 이름이 맞는지. 받는 사람 메일함의 사본에 숨은 참조가 보이지 않는지(원본 보기에 Bcc 줄 없음),"
     " 숨은 참조 주소에도 도착했는지. 보낸 계정의 보낸편지함에 숨은 참조가 보이는 것은 정상",
     "4": "오류의 SMTP 코드를 docs/interface.md 5.2 표(Gmail 535 5.7.8)와 비교",
-    "5": "받은 메일의 From 이 입력한 주소인지, 로그인 계정 주소로 바뀌었는지",
-    "6": "결과가 sent 면 발신 계정으로 반송(Mail Delivery Subsystem) 메일이 오는지",
+    "5": "결과가 sent 면 발신 계정으로 반송(Mail Delivery Subsystem) 메일이 오는지",
 }
 
 
@@ -116,7 +114,6 @@ def main() -> int:
     chosen = [key for key in split_addresses(ask("실행할 번호 (쉼표로 여러 개)", DEFAULT_SCENARIOS)) if key in SCENARIOS]
     # 숨은 참조를 보낸 계정 자신으로 보내면, 보낸 계정 쪽 사본에는 숨은 참조가 보이는 것이 정상이라 누출 여부를 가릴 수 없다
     bcc = split_addresses(ask("\n[3] 에 쓸 숨은 참조 주소 (받는 사람·보낸 계정과 다른, 확인 가능한 주소)")) if "3" in chosen else []
-    other_address = ask("\n[5] 에 쓸 다른 발신 주소 (본인 소유의 다른 주소)") if "5" in chosen else ""
 
     sends = sum(1 for key in chosen if key in SENDING)
     print(f"\n서버 {SMTP_HOST}:{port} ({label}), 계정 {address}, 받는 사람 {', '.join(to)}")
@@ -131,8 +128,9 @@ def main() -> int:
         "smtp_security": security,
         "smtp_username": address,
         "smtp_password": password,
+        "from_name": from_name,
     }
-    mail = {**connection, "from_address": address, "from_name": from_name, "to": to}
+    mail = {**connection, "to": to}
     note = f"메일 발송 Tool 실서비스 시험(F-04)으로 보낸 메일입니다.\n보낸 시각: {stamp}\n"
 
     results = {}
@@ -150,11 +148,6 @@ def main() -> int:
         elif key == "4":
             results[key] = run(key, "AUTH_FAILED", check, **{**connection, "smtp_password": WRONG_PASSWORD})
         elif key == "5":
-            results[key] = run(
-                key, "sent", send_mail, **{**mail, "from_address": other_address},
-                subject=f"[메일 Tool 시험] 다른 발신 주소 {stamp}", body=note + f"입력한 발신 주소: {other_address}\n",
-            )
-        elif key == "6":
             nobody = f"no-such-user-{secrets.token_hex(8)}@gmail.com"
             results[key] = run(
                 key, None, send_mail, **{**mail, "to": [nobody]},

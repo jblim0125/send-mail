@@ -6,10 +6,10 @@ Generic Agent 가 Tool 로 호출해 SMTP 서버로 메일을 보낸다. 특정 
     send_mail: 메일 발송. 등록 impl 은 `tools.send_mail:send_mail`.
     check: 연결 테스트. 메일을 보내지 않고 접속·STARTTLS·로그인까지만 확인한다. 등록 위치는 `tools.send_mail:check`.
 
-입력은 세 갈래를 합친 키워드 인자다.
-    연결 항목: smtp_host, smtp_port, smtp_security, smtp_username, smtp_password (운영자가 연결로 등록)
-    Agent 설정 항목: from_address, from_name (운영자가 Agent 에 Tool 을 붙일 때 입력)
+입력은 두 갈래를 합친 키워드 인자다.
+    설정 항목: smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, from_name (운영자가 미리 등록)
     호출 항목: to, cc, bcc, subject, body, body_format (모델이 Tool 을 호출할 때 입력)
+발신 주소는 로그인 계정(smtp_username)으로 고정한다. 계정과 다른 주소로는 보낼 수 없다.
 
 실패는 MailToolError 로 알리며, 메시지는 모델에 그대로 전달될 수 있다.
 명세는 docs/interface.md, 설계 근거는 docs/design.md 를 따른다. 표준 라이브러리만 쓴다.
@@ -31,7 +31,7 @@ _SOCKET_TIMEOUT = 10  # 초. 소켓 작업마다 적용되므로 전체 소요 �
 _MAX_RECIPIENTS = 20  # to, cc, bcc 를 합친 수신자 상한
 # 오입력과 내부망 서비스 접속을 막기 위해 SMTP 포트만 허용한다.
 _ALLOWED_PORTS = frozenset({25, 465, 587, 2525})
-_SECURITY_MODES = ("starttls", "ssl", "none")
+_SECURITY_MODES = ("starttls", "ssl")
 # 인증 방식 시도 순서. smtplib.login() 과 같다.
 _AUTH_PREFERENCE = ("CRAM-MD5", "PLAIN", "LOGIN")
 # RFC 3463 확장 상태 코드. 서버 응답에서 이 코드만 오류 메시지에 남긴다.
@@ -64,14 +64,13 @@ class MailToolError(Exception):
 
 def send_mail(
     smtp_host: str,
-    from_address: str,
+    smtp_username: str,
+    smtp_password: str,
     to: list[str],
     subject: str,
     body: str,
     smtp_port: int = 587,
     smtp_security: str = "starttls",
-    smtp_username: str | None = None,
-    smtp_password: str | None = None,
     from_name: str | None = None,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
@@ -79,34 +78,32 @@ def send_mail(
 ) -> dict:
     """메일을 SMTP 서버로 발송한다.
 
-    매개변수 이름은 등록 스키마(연결·Agent 설정·호출)의 속성 이름과 같다. 플랫폼이 세 갈래를 합쳐 넘긴다.
+    매개변수 이름은 등록 스키마(설정·호출)의 속성 이름과 같다. 플랫폼이 두 갈래를 합쳐 넘긴다.
 
     동작 순서:
         1. 검증: 설정 항목은 CONFIG_ERROR, 호출 항목은 INVALID_INPUT 으로 거부한다. 위반하면 접속하지 않는다.
         2. 메시지 구성: From, To, Cc, Subject, Date, Message-ID, Auto-Submitted 헤더와 본문을 만든다.
            Bcc 는 헤더에 넣지 않고 envelope 수신자에만 넣는다.
         3. 접속: 서버에 접속해 EHLO 를 보내고, smtp_security 가 "starttls" 면 TLS 로 전환한다.
-        4. 로그인: smtp_username 이 있으면 로그인한다.
+        4. 로그인: smtp_username 과 smtp_password 로 로그인한다.
         5. 전송: 모든 수신자에게 한 번에 보낸다. 일부 수신자가 거부돼도 나머지가 접수되면 성공이다.
         6. 종료: QUIT 를 보낸다. 메일은 이미 접수됐으므로 이 단계의 오류는 무시한다.
 
     Args:
-        smtp_host: [연결] SMTP 서버 호스트명 또는 IPv4 주소. 예: "smtp.gmail.com"
-        from_address: [Agent 설정] 보내는 사람 주소. `local@domain` 형식의 ASCII 주소만 받는다.
-            보통 smtp_username 과 같은 주소를 넣는다. 도메인은 EHLO 이름과 Message-ID 에도 쓴다.
+        smtp_host: [설정] SMTP 서버 호스트명 또는 IPv4 주소. 예: "smtp.gmail.com"
+        smtp_username: [설정] 로그인 계정이자 보내는 사람 주소(From, MAIL FROM). `local@domain` 형식의 ASCII 주소만 받는다.
+            도메인은 EHLO 이름과 Message-ID 에도 쓴다.
+        smtp_password: [설정] 비밀번호 또는 앱 비밀번호. 빈 값이면 안 된다. 결과와 오류 메시지에 넣지 않는다.
+            제목이나 본문에 이 값이 그대로 들어 있으면 INVALID_INPUT 으로 거부한다.
         to: [호출] 받는 사람 주소 목록. 1명 이상(스키마에서 검증).
         subject: [호출] 제목. 앞뒤 공백을 뺀 뒤 비어 있으면 안 되고, 줄바꿈 문자를 쓸 수 없다.
         body: [호출] 본문. body_format 에 따라 텍스트 또는 HTML 로 보낸다.
-        smtp_port: [연결] SMTP 포트. 25, 465, 587, 2525 중 하나. 기본 587.
-        smtp_security: [연결] 연결 보안 방식. 기본 "starttls".
+        smtp_port: [설정] SMTP 포트. 25, 465, 587, 2525 중 하나. 기본 587.
+        smtp_security: [설정] 연결 보안 방식. 기본 "starttls".
             "starttls": 평문으로 접속한 뒤 TLS 로 전환한다(보통 587). 서버가 지원하지 않으면 평문으로 강등하지 않고 실패한다.
             "ssl": 접속 즉시 TLS 를 쓴다(보통 465).
-            "none": 평문. 비밀번호가 평문으로 전송되므로 로그인 정보와 함께 쓸 수 없다.
             TLS 인증서는 시스템 CA 로 검증한다.
-        smtp_username: [연결] 로그인 계정. smtp_password 와 함께 넣거나 함께 생략한다. 생략하면 로그인하지 않는다.
-        smtp_password: [연결] 비밀번호 또는 앱 비밀번호. 결과와 오류 메시지에 넣지 않는다.
-            제목이나 본문에 이 값이 그대로 들어 있으면 INVALID_INPUT 으로 거부한다.
-        from_name: [Agent 설정] 보내는 사람 표시 이름. 줄바꿈 문자를 쓸 수 없다. 비ASCII 는 RFC 2047 로 인코딩한다.
+        from_name: [설정] 보내는 사람 표시 이름. 줄바꿈 문자를 쓸 수 없다. 비ASCII 는 RFC 2047 로 인코딩한다.
         cc: [호출] 참조 주소 목록. 기본 없음.
         bcc: [호출] 숨은 참조 주소 목록. 메일 헤더에 나타나지 않는다. 기본 없음.
         body_format: [호출] "text" 또는 "html". 기본 "text".
@@ -133,8 +130,7 @@ def send_mail(
     """
     cc = cc or []
     bcc = bcc or []
-    _validate_connection(smtp_port, smtp_security, smtp_username, smtp_password)
-    sender = _validate_sender(from_address, from_name)
+    sender = _validate_connection(smtp_port, smtp_security, smtp_username, smtp_password, from_name)
     recipients = _validate_call(to, cc, bcc, subject, body, smtp_password)
 
     msg = _build_message(sender, from_name, to, cc, subject, body, body_format)
@@ -150,22 +146,24 @@ def send_mail(
 
 def check(
     smtp_host: str,
+    smtp_username: str,
+    smtp_password: str,
     smtp_port: int = 587,
     smtp_security: str = "starttls",
-    smtp_username: str | None = None,
-    smtp_password: str | None = None,
+    from_name: str | None = None,
 ) -> dict:
     """연결 테스트. 메일을 보내지 않고 접속·STARTTLS·로그인까지만 확인한다.
 
-    플랫폼이 연결을 저장할 때와 호스트·비밀번호를 바꿀 때 호출하는 용도다. 모델에 노출하는 Tool 이 아니다.
-    send_mail 과 같은 방식으로 접속·로그인하고, QUIT 로 끝낸다. 발신 주소가 없으므로 EHLO 이름은 "localhost" 를 쓴다.
+    플랫폼이 설정을 저장할 때와 호스트·비밀번호를 바꿀 때 호출하는 용도다. 모델에 노출하는 Tool 이 아니다.
+    설정 항목 전체를 받아 send_mail 과 같은 규칙으로 검증하고, 같은 방식으로 접속·로그인한 뒤 QUIT 로 끝낸다.
 
     Args:
         smtp_host: SMTP 서버 호스트명 또는 IPv4 주소.
-        smtp_port: SMTP 포트. 25, 465, 587, 2525 중 하나. 기본 587.
-        smtp_security: "starttls", "ssl", "none" 중 하나. 기본 "starttls". 의미는 send_mail 과 같다.
-        smtp_username: 로그인 계정. smtp_password 와 함께 넣거나 함께 생략한다.
+        smtp_username: 로그인 계정이자 보내는 사람 주소.
         smtp_password: 비밀번호 또는 앱 비밀번호.
+        smtp_port: SMTP 포트. 25, 465, 587, 2525 중 하나. 기본 587.
+        smtp_security: "starttls", "ssl" 중 하나. 기본 "starttls". 의미는 send_mail 과 같다.
+        from_name: 보내는 사람 표시 이름. 검증만 한다.
 
     Returns:
         {"status": "ok"}
@@ -173,55 +171,43 @@ def check(
     Raises:
         MailToolError: code 가 CONFIG_ERROR, CONNECTION_FAILED, AUTH_FAILED 중 하나다. 의미는 send_mail 과 같다.
     """
-    _validate_connection(smtp_port, smtp_security, smtp_username, smtp_password)
-    # 기본값 socket.getfqdn() 은 Pod 이름을 보낸다
-    smtp = _connect(smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, "localhost")
+    sender = _validate_connection(smtp_port, smtp_security, smtp_username, smtp_password, from_name)
+    smtp = _connect(smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, sender.domain)
     _quit(smtp)
     return {"status": "ok"}
 
 
-def _validate_connection(port: int, security: str, username: str | None, password: str | None) -> None:
-    """연결 항목 규칙을 검사한다. 위반하면 CONFIG_ERROR.
+def _validate_connection(port: int, security: str, username: str, password: str, from_name: str | None) -> Address:
+    """설정 항목 규칙을 검사한다. 위반하면 CONFIG_ERROR.
 
     포트·보안 방식은 스키마에도 있지만, 현재 플랫폼이 설정 스키마를 따로 검증하지 않으므로 여기서도 본다.
 
     Args:
         port: smtp_port.
         security: smtp_security.
-        username: smtp_username. 없거나 빈 값이면 로그인하지 않는 것으로 본다.
-        password: smtp_password. username 과 함께 있거나 함께 없어야 한다.
+        username: smtp_username. 발신 주소로 쓰므로 주소 형식이어야 한다.
+        password: smtp_password. 빈 값이면 안 된다.
+        from_name: 보내는 사람 표시 이름. 줄바꿈이 있으면 헤더 인젝션이 되므로 거부한다.
+
+    Returns:
+        계정을 파싱한 발신 주소. 도메인(`domain`)은 EHLO 이름과 Message-ID 에 쓴다.
     """
     if port not in _ALLOWED_PORTS:
         raise MailToolError("CONFIG_ERROR", "smtp_port 는 25, 465, 587, 2525 중 하나여야 합니다")
     if security not in _SECURITY_MODES:
-        raise MailToolError("CONFIG_ERROR", "smtp_security 는 starttls, ssl, none 중 하나여야 합니다")
-    if bool(username) != bool(password):
-        raise MailToolError("CONFIG_ERROR", "smtp_username 과 smtp_password 는 함께 설정해야 합니다")
-    if security == "none" and username:
-        # 비밀번호가 평문으로 전송되는 것을 막는다
-        raise MailToolError("CONFIG_ERROR", "smtp_security 가 none 이면 로그인 정보를 설정할 수 없습니다")
-
-
-def _validate_sender(from_address: str, from_name: str | None) -> Address:
-    """발신자 설정 항목을 검사한다. 위반하면 CONFIG_ERROR.
-
-    Args:
-        from_address: 보내는 사람 주소.
-        from_name: 보내는 사람 표시 이름. 줄바꿈이 있으면 헤더 인젝션이 되므로 거부한다.
-
-    Returns:
-        파싱한 발신 주소. 도메인(`domain`)은 EHLO 이름과 Message-ID 에 쓴다.
-    """
-    sender = _parse_address(from_address)
+        raise MailToolError("CONFIG_ERROR", "smtp_security 는 starttls, ssl 중 하나여야 합니다")
+    sender = _parse_address(username)
     if sender is None:
-        raise MailToolError("CONFIG_ERROR", "from_address 주소 형식이 올바르지 않습니다")
+        raise MailToolError("CONFIG_ERROR", "smtp_username 은 메일 주소 형식이어야 합니다")
+    if not password:
+        raise MailToolError("CONFIG_ERROR", "smtp_password 를 설정해야 합니다")
     if from_name and _has_newline(from_name):
         raise MailToolError("CONFIG_ERROR", "from_name 에 줄바꿈 문자를 쓸 수 없습니다")
     return sender
 
 
 def _validate_call(
-    to: list[str], cc: list[str], bcc: list[str], subject: str, body: str, password: str | None
+    to: list[str], cc: list[str], bcc: list[str], subject: str, body: str, password: str
 ) -> list[str]:
     """호출 항목 규칙을 검사한다. 위반하면 INVALID_INPUT. 모델이 입력을 고쳐 다시 부를 수 있는 오류다.
 
@@ -250,7 +236,7 @@ def _validate_call(
     if _has_newline(subject):
         raise MailToolError("INVALID_INPUT", "제목에 줄바꿈 문자를 쓸 수 없습니다")
     # 보조 수단이다. 단순 포함 검사라 인코딩·분할로 우회할 수 있다(design.md 4.4).
-    if password and (password in subject or password in body):
+    if password in subject or password in body:
         raise MailToolError("INVALID_INPUT", "제목이나 본문에 smtp_password 값이 들어 있습니다")
     return recipients
 
@@ -302,7 +288,7 @@ def _build_message(
     """발송할 메시지를 만든다.
 
     헤더 규칙:
-        From: `from_name <from_address>`, from_name 이 없으면 주소만.
+        From: `from_name <smtp_username>`, from_name 이 없으면 주소만.
         To, Cc: 입력값. Bcc 는 넣지 않는다.
         Date: 현재 시각(로컬 시간대).
         Message-ID: 발신 도메인으로 만든다.
@@ -337,9 +323,7 @@ def _build_message(
     return msg
 
 
-def _connect(
-    host: str, port: int, security: str, username: str | None, password: str | None, ehlo_name: str
-) -> smtplib.SMTP:
+def _connect(host: str, port: int, security: str, username: str, password: str, ehlo_name: str) -> smtplib.SMTP:
     """1~3단계: 서버에 접속하고, 필요하면 TLS 로 전환한 뒤 로그인한다.
 
     단계별 오류 분류:
@@ -351,13 +335,13 @@ def _connect(
     Args:
         host: 서버 호스트.
         port: 서버 포트.
-        security: "starttls", "ssl", "none" 중 하나.
-        username: 로그인 계정. 없으면 로그인하지 않는다.
+        security: "starttls", "ssl" 중 하나.
+        username: 로그인 계정.
         password: 비밀번호.
         ehlo_name: EHLO 로 보낼 이름. 기본값 socket.getfqdn() 은 Pod 이름을 노출하므로 호출자가 정한다.
 
     Returns:
-        접속(과 로그인)을 마친 SMTP 연결. 호출자가 닫아야 한다.
+        접속과 로그인을 마친 SMTP 연결. 호출자가 닫아야 한다.
     """
     smtp = None
     try:
@@ -380,12 +364,11 @@ def _connect(
             raise MailToolError("CONNECTION_FAILED", "메일 서버가 STARTTLS 를 지원하지 않습니다") from None
         raise _connection_failed() from None
 
-    if username and password:
-        try:
-            _login(smtp, username, password)
-        except OSError as exc:
-            smtp.close()
-            raise _login_error(exc) from None
+    try:
+        _login(smtp, username, password)
+    except OSError as exc:
+        smtp.close()
+        raise _login_error(exc) from None
     return smtp
 
 
