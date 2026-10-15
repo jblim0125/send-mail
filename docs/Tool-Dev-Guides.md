@@ -472,17 +472,19 @@ Sandbox 가 파일을 결과로 남기려면 Agent Resource Manager 에 두 단�
 - `tool_def.auth_ref`, Snapshot `scope.secret_refs` 는 자격의 이름(참조)만 담는다. 값을 어디에 두고 어떻게 주입할지는 정해지지 않았다[[42]](#ref-42)[[36]](#ref-36).
 - MCP 서버 인증 값을 Snapshot 필드로 더할 예정이지만, "Snapshot 에 자격을 넣지 않는다" 원칙과 부딪혀 범위가 미정이다[[34]](#ref-34).
 
-### 7.2. 입력 세 갈래
+### 7.2. 입력 갈래
 
-조사한 플랫폼은 모두 "연결·자격 설정"과 "모델이 채우는 입력"을 따로 선언한다[[81]](#ref-81). 메일 발송 Tool 은 입력을 세 갈래로 나눴다[[78]](#ref-78).
+조사한 플랫폼은 모두 "연결·자격 설정"과 "모델이 채우는 입력"을 따로 선언한다[[81]](#ref-81). 메일 발송 Tool 은 연결과 호출 두 갈래만 쓴다[[78]](#ref-78). 메일 Tool 문서는 연결 항목을 "설정 항목"이라 부른다.
+Agent 마다 다른 값이 필요한 Tool 은 Agent 설정 갈래를 더한다.
 
-| 갈래       | 입력하는 사람과 시점                       | 모델 노출 | 메일 Tool 예                                  |
-| ---------- | ------------------------------------------ | --------- | --------------------------------------------- |
-| 연결       | 운영자, 연결 등록 시. 여러 Agent 가 재사용 | X         | `smtp_host`, `smtp_username`, `smtp_password` |
-| Agent 설정 | 운영자, Agent 에 Tool 을 붙일 때           | X         | `from_address`, `from_name`                   |
-| 호출       | 모델, Tool 호출 시                         | O         | `to`, `subject`, `body`                       |
+| 갈래       | 입력하는 사람과 시점                       | 모델 노출 | 메일 Tool 예                                               |
+| ---------- | ------------------------------------------ | --------- | ---------------------------------------------------------- |
+| 연결       | 운영자, 연결 등록 시. 여러 Agent 가 재사용 | X         | `smtp_host`, `smtp_username`, `smtp_password`, `from_name` |
+| Agent 설정 | 운영자, Agent 에 Tool 을 붙일 때           | X         | 없음. 발신자도 연결에 둔다                                 |
+| 호출       | 모델, Tool 호출 시                         | O         | `to`, `subject`, `body`                                    |
 
-- 함수는 세 갈래를 합친 값을 키워드 인자로 받는다. 합치는 일은 플랫폼이 하므로 Tool 코드는 값의 출처와 무관하다.
+- 메일 발송 Tool 은 발신 주소를 연결 계정(`smtp_username`)으로 고정한다. 계정과 다른 주소로 보내는 위장을 막기 위해서다.
+- 함수는 갈래별 값을 합친 값을 키워드 인자로 받는다. 합치는 일은 플랫폼이 하므로 Tool 코드는 값의 출처와 무관하다.
 - 갈래 구분은 함수가 아니라 등록 스키마로 표현한다.
 - 호출 스키마에 `additionalProperties: false` 를 두면 모델이 설정 항목(예: `smtp_host`)을 넘겨 바꿔치기하는 것을 막는다.
   플랫폼이 호출 항목만 따로 검증할 때만 성립한다.
@@ -591,10 +593,10 @@ Tool 개발자가 할 수 있는 일은 비밀값을 필요한 범위에서만 �
 
 | 코드                | 조건                                | 재시도                |
 | ------------------- | ----------------------------------- | --------------------- |
-| `CONFIG_ERROR`      | 설정 항목 규칙 위반 (접속 전)       | 불가. Agent 설정 수정 |
+| `CONFIG_ERROR`      | 설정 항목 규칙 위반 (접속 전)       | 불가. 설정 수정       |
 | `INVALID_INPUT`     | 호출 항목 규칙 위반 (접속 전)       | 입력 수정 후 가능     |
 | `CONNECTION_FAILED` | 접속·TLS 실패, 타임아웃 (로그인 전) | 1회 가능              |
-| `AUTH_FAILED`       | 로그인 실패                         | 불가. Agent 설정 수정 |
+| `AUTH_FAILED`       | 로그인 실패                         | 불가. 설정 수정       |
 | `SEND_REJECTED`     | 서버가 요청을 거부                  | 불가                  |
 | `DELIVERY_UNKNOWN`  | 전송 도중 연결 끊김·타임아웃        | 금지 (중복 위험)      |
 
@@ -623,10 +625,10 @@ Tool 개발자가 할 수 있는 일은 비밀값을 필요한 범위에서만 �
 
 ```text
 메일을 발송합니다. 받는 사람(to, cc, bcc), 제목, 본문을 받습니다.
-- 메일 서버와 보내는 사람은 Agent 설정에 고정되어 있어 지정할 수 없습니다.
+- 메일 서버와 보내는 사람은 설정에 고정되어 있어 지정할 수 없습니다.
 - 주소는 user@example.com 형식만 씁니다. 첨부 파일은 보낼 수 없습니다.
 - 결과의 refused 에 있는 주소는 메일을 받지 못했습니다.
-- CONFIG_ERROR, AUTH_FAILED 는 Agent 설정 문제입니다. 다시 호출하지 말고 사용자에게 알리세요.
+- CONFIG_ERROR, AUTH_FAILED 는 설정 문제입니다. 다시 호출하지 말고 사용자에게 알리세요.
 - DELIVERY_UNKNOWN 이거나 시간 초과로 끝나면 이미 발송됐을 수 있습니다.
   다시 호출하지 말고 사용자에게 알리세요.
 ```
@@ -1024,10 +1026,10 @@ Python Tool 에 저장소 규칙을 그대로 적용할지, pytest 수집 설정
 - <a id="ref-85"></a>[85] Tool 설정·비밀값 전달 방식 조사 3.4~3.5 처리 흐름, 샌드박스 안 규칙
   — [`tools/mail-tool/docs/tool-설정-전달-조사.md`](tool-설정-전달-조사.md)
 - <a id="ref-86"></a>[86] 메일 발송 Tool 후속 과제
-  — [`tools/mail-tool/docs/후속과제.md`](후속과제.md)
+  — [`tools/mail-tool/docs/follow-ups.md`](follow-ups.md)
 - <a id="ref-87"></a>[87] 메일 발송 Tool 후속 과제 F-01 기록의 민감정보 마스킹
-  — [`tools/mail-tool/docs/후속과제.md`](후속과제.md)
+  — [`tools/mail-tool/docs/follow-ups.md`](follow-ups.md)
 - <a id="ref-88"></a>[88] 메일 발송 Tool 후속 과제 F-08 중복 발송 방지
-  — [`tools/mail-tool/docs/후속과제.md`](후속과제.md)
+  — [`tools/mail-tool/docs/follow-ups.md`](follow-ups.md)
 - <a id="ref-89"></a>[89] 메일 발송 Tool 후속 과제 F-10 Tool 실행 격리
-  — [`tools/mail-tool/docs/후속과제.md`](후속과제.md)
+  — [`tools/mail-tool/docs/follow-ups.md`](follow-ups.md)

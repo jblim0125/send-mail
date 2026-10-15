@@ -166,7 +166,8 @@ warm pool과 호환되고 값을 바꾸면 다음 호출부터 반영된다.
 
 ### 3.3. 등록 형식
 
-연결 자격은 여러 Agent가 재사용하는 이름 붙은 연결로, 발신 주소처럼 Agent마다 다를 수 있는 값은 Agent별 설정으로 나눈다.
+연결 자격은 여러 Agent가 재사용하는 이름 붙은 연결로, Agent마다 다를 수 있는 값은 Agent별 설정으로 나눈다.
+메일 Tool은 발신자도 연결에 두므로(발신 주소 = 연결 계정, `design.md` 3.3, 2026-10-15) Agent별 설정이 없다.
 Dify의 provider 자격과 n8n의 credential이 연결에 해당한다. 아래는 형식 예시이며, 실제 등록 형식은 플랫폼이 정한다.
 현재 `registry.tool_def`에는 `input_schema` 외에 연결 스키마·Agent별 설정 스키마·연결 테스트 진입점을 담을 열이 없다(Governance `storage.md` §9.3).
 따라서 이 형식은 플랫폼에 제안할 확장안이다.
@@ -181,16 +182,12 @@ connection_schema:                   # 연결: 여러 Agent가 재사용
   properties:
     smtp_host: { type: string }
     smtp_port: { type: integer, enum: [25, 465, 587, 2525], default: 587 }
-    smtp_security: { type: string, enum: [starttls, ssl, none], default: starttls }
-    smtp_username: { type: string }
+    smtp_security: { type: string, enum: [starttls, ssl], default: starttls }
+    smtp_username: { type: string, format: email }   # 발신 주소로도 쓴다
     smtp_password: { type: string, format: password, writeOnly: true }
-  required: [smtp_host]
-config_schema:                       # Agent별 설정
-  type: object
-  properties:
-    from_address: { type: string, format: email }
     from_name: { type: string }
-  required: [from_address]
+  required: [smtp_host, smtp_username, smtp_password]
+# config_schema:                     # Agent별 설정. 메일 Tool은 없음
 input_schema:                        # 모델이 채우는 호출 항목
   type: object
   properties:
@@ -201,7 +198,7 @@ input_schema:                        # 모델이 채우는 호출 항목
   additionalProperties: false
 ```
 
-Tool 함수는 세 스키마를 합친 값을 키워드 인자로 받으므로 `send_mail()` 시그니처는 바뀌지 않는다.
+Tool 함수는 연결·호출 스키마를 합친 값을 키워드 인자로 받으므로 `send_mail()` 시그니처는 바뀌지 않는다.
 `check()`는 메일을 보내지 않고 접속·STARTTLS·로그인까지만 확인한다. 연결을 저장할 때와 호스트나 비밀번호를 바꿀 때 실행한다.
 `check()`도 Tool 코드이므로 샌드박스에서 실행해야 한다.
 
@@ -221,7 +218,7 @@ Op -> API : 연결 입력 (smtp_host, smtp_password ...)
 API -> API : 샌드박스에서 check() 실행
 API -> Store : 암호화 저장
 API --> Op : 가림값으로 표시
-Op -> API : Agent에 Tool 추가 (connection_id, from_address)
+Op -> API : Agent에 Tool 추가 (connection_id)
 
 == 실행 ==
 API -> Worker : 실행 할당 (SandboxClaim, job_id 파일, Job 토큰. 비밀값 없음)
@@ -274,12 +271,13 @@ Worker가 소비하는 Command Queue는 없고, Sandbox가 갖는 자격은 Job 
 agent-sandbox 메인테이너가 권하는 tool proxy 방식이고 [1], Claude Code의 GitHub 프록시 [13], agent-sandbox `nono` 예제의 phantom 토큰과 같은 구조다.
 
 ```text
-Tool ──SMTP AUTH(사용자=job_id, 비밀번호=실행 토큰)──▶ 메일 게이트웨이 ──SMTP AUTH(실제 계정)──▶ 메일 서비스
-                                                      │
-                                                      └─ 토큰 검증, connection_id로 실제 자격 조회
+Tool ──SMTP AUTH(사용자=연결 계정, 비밀번호=실행 토큰)──▶ 메일 게이트웨이 ──SMTP AUTH(실제 계정)──▶ 메일 서비스
+                                                         │
+                                                         └─ 토큰 검증, connection_id로 실제 자격 조회
 ```
 
 **제안.** 게이트웨이가 SMTP를 그대로 받으면 Tool 코드는 바뀌지 않는다. 연결 설정만 게이트웨이 주소와 실행 토큰으로 바꾼다.
+Tool은 로그인 계정을 발신 주소로 쓰므로, 계정은 실제 연결 계정을 그대로 두고 비밀번호 자리에만 실행 토큰을 넣는다.
 게이트웨이는 토큰을 검증하고, 실행에 연결된 실제 계정으로 상위 서버에 인증해 중계한다.
 Postfix는 발신자별 SASL 자격으로 상위 서버에 중계하는 기능을 문서화하고 있다 [19].
 다만 Tool이 보낸 토큰을 검증하는 부분은 직접 구현해야 하고, SMTP 주입을 이렇게 구성한 공개 사례는 찾지 못했다(확인 필요).
@@ -317,7 +315,7 @@ Postfix는 발신자별 SASL 자격으로 상위 서버에 중계하는 기능�
   Governance `architecture.md` §2.2 대로 승인 목적지만 허용하도록 좁히고, 설정 조회 API와 Tool 목적지(예: SMTP 465·587)를 여기에 포함한다.
 - 권한: 연결은 "사용만 가능"과 "조회·수정 가능" 권한을 나눈다. n8n은 공유받은 사용자가 자격 상세를 보거나 고칠 수 없게 한다 [9].
 - 감사: 연결 등록·변경, 설정 조회 API 호출을 값 없이 기록한다.
-- 기록 마스킹: 결과·오류·로그에 섞인 비밀값은 값 기반으로 치환한다(`후속과제.md` F-01).
+- 기록 마스킹: 결과·오류·로그에 섞인 비밀값은 값 기반으로 치환한다(`follow-ups.md` F-01).
 
 ## 6. 확인 필요 사항
 

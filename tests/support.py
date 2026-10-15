@@ -26,6 +26,13 @@ class RecordingHandler:
     refuse_rcpts: set[str] = field(default_factory=set)
     drop_on_data: bool = False
     received: list[Received] = field(default_factory=list)
+    ehlo_names: list[str] = field(default_factory=list)
+
+    async def handle_EHLO(self, server, session, envelope, hostname, responses):
+        # 이 훅을 두면 aiosmtpd 가 session.host_name 을 채우지 않으므로 직접 채운다
+        session.host_name = hostname
+        self.ehlo_names.append(hostname)
+        return responses
 
     async def handle_MAIL(self, server, session, envelope, address, mail_options):
         if self.refuse_sender:

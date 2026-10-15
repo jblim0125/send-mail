@@ -12,8 +12,6 @@ from aiosmtpd.smtp import AuthResult
 from tests.support import PASSWORD, USERNAME, RecordingHandler, authenticate
 from tools.send_mail import TOOL_VERSION, MailToolError, check, send_mail
 
-SENDER = "test-account@example.com"
-
 
 def call(server, **overrides):
     """설정 항목과 호출 항목을 합쳐 send_mail 을 부른다. 기본은 STARTTLS 와 로그인."""
@@ -23,7 +21,6 @@ def call(server, **overrides):
         "smtp_security": "starttls",
         "smtp_username": USERNAME,
         "smtp_password": PASSWORD,
-        "from_address": SENDER,
         "to": ["kim@example.com"],
         "subject": "주간 보고",
         "body": "본문",
@@ -63,7 +60,7 @@ def test_starttls_login_sends_text_mail_and_returns_message_id(smtp_server, trus
     assert result["accepted_count"] == 1 and result["refused"] == []
     json.dumps(result)
     [received] = server.handler.received
-    assert received.mail_from == SENDER
+    assert received.mail_from == USERNAME
     assert received.rcpt_tos == ["kim@example.com"]
     assert parse(received)["Message-ID"] == result["message_id"]
 
@@ -71,13 +68,6 @@ def test_starttls_login_sends_text_mail_and_returns_message_id(smtp_server, trus
 def test_ssl_login_sends_mail(smtp_server, trust_test_ca):
     server = smtp_server(tls="ssl")
     assert call(server, smtp_security="ssl")["status"] == "sent"
-    assert len(server.handler.received) == 1
-
-
-def test_sends_without_login_when_credentials_are_omitted(smtp_server):
-    server = smtp_server(tls=None, auth=False)
-    result = call(server, smtp_security="none", smtp_username=None, smtp_password=None)
-    assert result["status"] == "sent"
     assert len(server.handler.received) == 1
 
 
@@ -146,16 +136,15 @@ def test_succeeds_when_quit_fails_after_sending(smtp_server, trust_test_ca, monk
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"smtp_username": USERNAME, "smtp_password": None},
-        {"smtp_username": None, "smtp_password": PASSWORD},
+        {"smtp_username": "not-an-address"},
+        {"smtp_username": "에이전트@example.com"},
+        {"smtp_password": ""},
         {"smtp_security": "none"},
-        {"from_address": "not-an-address"},
-        {"from_address": "에이전트@example.com"},
         {"from_name": "AI\r\nBcc: x@example.com"},
         {"smtp_port": 6379},
         {"smtp_security": "tls"},
     ],
-    ids=["username-only", "password-only", "none-with-login", "bad-from", "non-ascii-from",
+    ids=["bad-username", "non-ascii-username", "empty-password", "none-security",
          "from-name-newline", "port-not-allowed", "unknown-security"],
 )
 def test_config_violation_fails_before_connecting(overrides, no_connection):
@@ -163,8 +152,7 @@ def test_config_violation_fails_before_connecting(overrides, no_connection):
 
 
 def test_check_rejects_config_violation_before_connecting(no_connection):
-    expect_error("CONFIG_ERROR", check, "127.0.0.1", smtp_security="none", smtp_username=USERNAME,
-                 smtp_password=PASSWORD)
+    expect_error("CONFIG_ERROR", check, "127.0.0.1", "not-an-address", PASSWORD)
 
 
 # 호출 위반: 접속을 시도하지 않는다
@@ -289,18 +277,20 @@ def test_disconnect_during_data_is_delivery_unknown(smtp_server, trust_test_ca):
 
 def test_check_logs_in_without_sending_mail(smtp_server, trust_test_ca):
     server = smtp_server(tls="starttls")
-    result = check(server.host, server.port, "starttls", USERNAME, PASSWORD)
+    result = check(server.host, USERNAME, PASSWORD, server.port, "starttls")
     assert result == {"status": "ok"}
     assert server.handler.received == []
+    # send_mail 과 같이 Pod 이름 대신 발신 도메인을 쓴다. STARTTLS 전후로 두 번 보낸다
+    assert server.handler.ehlo_names == ["example.com", "example.com"]
 
 
 def test_check_reports_wrong_password(smtp_server, trust_test_ca):
     server = smtp_server(tls="starttls")
-    expect_error("AUTH_FAILED", check, server.host, server.port, "starttls", USERNAME, "wrong-password")
+    expect_error("AUTH_FAILED", check, server.host, USERNAME, "wrong-password", server.port, "starttls")
 
 
 def test_check_reports_unreachable_server(closed_port):
-    expect_error("CONNECTION_FAILED", check, "127.0.0.1", closed_port, "starttls", USERNAME, PASSWORD)
+    expect_error("CONNECTION_FAILED", check, "127.0.0.1", USERNAME, PASSWORD, closed_port, "starttls")
 
 
 # 등록 규약 (가이드 12장 점검표)
