@@ -183,10 +183,11 @@ connection_schema:                   # 연결: 여러 Agent가 재사용
     smtp_host: { type: string }
     smtp_port: { type: integer, enum: [25, 465, 587, 2525], default: 587 }
     smtp_security: { type: string, enum: [starttls, ssl], default: starttls }
+    smtp_auth: { type: string, enum: [login, none], default: login }   # none: 사내 무인증 릴레이
     smtp_username: { type: string, format: email }   # 발신 주소로도 쓴다
-    smtp_password: { type: string, format: password, writeOnly: true }
+    smtp_password: { type: string, format: password, writeOnly: true }   # smtp_auth=login 일 때 필수
     from_name: { type: string }
-  required: [smtp_host, smtp_username, smtp_password]
+  required: [smtp_host, smtp_username]
 # config_schema:                     # Agent별 설정. 메일 Tool은 없음
 input_schema:                        # 모델이 채우는 호출 항목
   type: object

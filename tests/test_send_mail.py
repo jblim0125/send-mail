@@ -119,6 +119,18 @@ def test_partially_refused_recipients_are_reported_as_sent(smtp_server, trust_te
     assert result["refused"] == [{"address": "old-user@example.com", "smtp_code": 550}]
 
 
+def test_relay_without_login_sends_mail_from_username(smtp_server, trust_test_ca):
+    # 사내 무인증 릴레이: AUTH 를 광고하지 않는 서버에 로그인 없이 보낸다
+    server = smtp_server(tls="starttls", auth=False)
+    result = call(server, smtp_auth="none", smtp_password=None)
+
+    assert result["status"] == "sent"
+    [received] = server.handler.received
+    assert received.mail_from == USERNAME
+    assert parse(received)["From"].addresses[0].addr_spec == USERNAME
+    assert received.ehlo_name == "example.com"
+
+
 def test_succeeds_when_quit_fails_after_sending(smtp_server, trust_test_ca, monkeypatch):
     server = smtp_server(tls="starttls")
 
@@ -139,20 +151,25 @@ def test_succeeds_when_quit_fails_after_sending(smtp_server, trust_test_ca, monk
         {"smtp_username": "not-an-address"},
         {"smtp_username": "에이전트@example.com"},
         {"smtp_password": ""},
+        {"smtp_password": None},
         {"smtp_security": "none"},
         {"from_name": "AI\r\nBcc: x@example.com"},
         {"smtp_port": 6379},
         {"smtp_security": "tls"},
+        {"smtp_auth": "oauth2"},
+        {"smtp_auth": "none"},
+        {"smtp_auth": "none", "smtp_password": None, "smtp_username": "not-an-address"},
     ],
-    ids=["bad-username", "non-ascii-username", "empty-password", "none-security",
-         "from-name-newline", "port-not-allowed", "unknown-security"],
+    ids=["bad-username", "non-ascii-username", "empty-password", "missing-password", "none-security",
+         "from-name-newline", "port-not-allowed", "unknown-security", "unknown-auth", "none-auth-with-password",
+         "none-auth-bad-username"],
 )
 def test_config_violation_fails_before_connecting(overrides, no_connection):
     expect_error("CONFIG_ERROR", call, None, **overrides)
 
 
 def test_check_rejects_config_violation_before_connecting(no_connection):
-    expect_error("CONFIG_ERROR", check, "127.0.0.1", "not-an-address", PASSWORD)
+    expect_error("CONFIG_ERROR", check, smtp_host="127.0.0.1", smtp_username="not-an-address", smtp_password=PASSWORD)
 
 
 # 호출 위반: 접속을 시도하지 않는다
@@ -199,9 +216,13 @@ def test_unreachable_server_is_connection_failed(closed_port):
     expect_error("CONNECTION_FAILED", call, None, smtp_port=closed_port)
 
 
-def test_starttls_unsupported_is_connection_failed_without_downgrade(smtp_server):
+@pytest.mark.parametrize(
+    "auth", [{}, {"smtp_auth": "none", "smtp_password": None}], ids=["login", "none-auth"]
+)
+def test_starttls_unsupported_is_connection_failed_without_downgrade(smtp_server, auth):
+    # 비밀번호가 없는 무인증 릴레이에서도 메일 내용을 평문으로 보내지 않는다
     server = smtp_server(tls=None, auth=False)
-    error = expect_error("CONNECTION_FAILED", call, server)
+    error = expect_error("CONNECTION_FAILED", call, server, **auth)
     assert "STARTTLS" in str(error)
     assert server.handler.received == []
 
@@ -277,20 +298,33 @@ def test_disconnect_during_data_is_delivery_unknown(smtp_server, trust_test_ca):
 
 def test_check_logs_in_without_sending_mail(smtp_server, trust_test_ca):
     server = smtp_server(tls="starttls")
-    result = check(server.host, USERNAME, PASSWORD, server.port, "starttls")
+    result = check(smtp_host=server.host, smtp_port=server.port, smtp_username=USERNAME, smtp_password=PASSWORD)
     assert result == {"status": "ok"}
     assert server.handler.received == []
     # send_mail 과 같이 Pod 이름 대신 발신 도메인을 쓴다. STARTTLS 전후로 두 번 보낸다
     assert server.handler.ehlo_names == ["example.com", "example.com"]
 
 
+def test_check_without_login_for_relay(smtp_server, trust_test_ca):
+    server = smtp_server(tls="starttls", auth=False)
+    result = check(smtp_host=server.host, smtp_port=server.port, smtp_username=USERNAME, smtp_auth="none")
+    assert result == {"status": "ok"}
+    assert server.handler.received == []
+
+
 def test_check_reports_wrong_password(smtp_server, trust_test_ca):
     server = smtp_server(tls="starttls")
-    expect_error("AUTH_FAILED", check, server.host, USERNAME, "wrong-password", server.port, "starttls")
+    expect_error(
+        "AUTH_FAILED", check,
+        smtp_host=server.host, smtp_port=server.port, smtp_username=USERNAME, smtp_password="wrong-password",
+    )
 
 
 def test_check_reports_unreachable_server(closed_port):
-    expect_error("CONNECTION_FAILED", check, "127.0.0.1", USERNAME, PASSWORD, closed_port, "starttls")
+    expect_error(
+        "CONNECTION_FAILED", check,
+        smtp_host="127.0.0.1", smtp_port=closed_port, smtp_username=USERNAME, smtp_password=PASSWORD,
+    )
 
 
 # 등록 규약 (가이드 12장 점검표)
