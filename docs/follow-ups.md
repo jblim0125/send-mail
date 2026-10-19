@@ -197,9 +197,17 @@ Tool 을 고치기 전에 `smtplib`로 직접 1통을 보내 연동을 확인했
 | --- | --- | --- |
 | 서버 기능 (EHLO) | STARTTLS, 8BITMIME, SIZE 30MB, CHARSET=EUC-KR. TLS 전후 모두 AUTH 없음 | `design.md` 2.3 반영 |
 | 연결 테스트 `check()` | `ok` | - |
-| 텍스트 메일 발송 | `sent`, `accepted_count` 1, `refused` 없음 | 도착·한글 표시는 사용자 확인 필요 |
+| 텍스트 메일 발송 | `sent`, `accepted_count` 1, `refused` 없음. Gmail 받은편지함 도착 | - |
+| 한글 표시 (Gmail) | 표시 이름·제목·본문 정상. 서버의 `CHARSET=EUC-KR` 광고와 무관 | - |
+| 발신 도메인 인증 (Gmail 원본 보기) | SPF none, DKIM pass(사내 도메인), DMARC pass | SPF none 원인 확인 필요 (`design.md` 8장 17번) |
 | `smtp_auth=login` 오설정 | `AUTH_FAILED` "지원하는 로그인 방식이 없습니다" | `interface.md` 5.2 반영 |
 | k8s 샌드박스 송신 IP 허용 | 미실행 | 샌드박스 실행 필요 (`design.md` 8장 15번) |
+
+**SPF none.** 사내 도메인의 공개 SPF 레코드에는 릴레이 IP가 들어 있는데도 Gmail은 SPF를 none으로 판정했다.
+SPF는 헤더 From이 아니라 envelope 발신 주소(Return-Path)의 도메인으로 평가한다.
+릴레이가 Return-Path를 SPF 레코드가 없는 다른 도메인으로 바꿨을 것으로 추정하며, 원본의 `Return-Path`로 확인한다.
+DMARC는 DKIM(사내 도메인 서명, From과 정렬)으로 통과했다. 사내 도메인의 DMARC 정책이 `quarantine`이므로,
+릴레이의 DKIM 서명이 빠지면 외부 수신자에게 스팸으로 분류될 수 있다.
 
 ### 3.5. F-05 수신자 통제
 
