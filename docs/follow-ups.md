@@ -199,15 +199,28 @@ Tool 을 고치기 전에 `smtplib`로 직접 1통을 보내 연동을 확인했
 | 연결 테스트 `check()` | `ok` | - |
 | 텍스트 메일 발송 | `sent`, `accepted_count` 1, `refused` 없음. Gmail 받은편지함 도착 | - |
 | 한글 표시 (Gmail) | 표시 이름·제목·본문 정상. 서버의 `CHARSET=EUC-KR` 광고와 무관 | - |
-| 발신 도메인 인증 (Gmail 원본 보기) | SPF none, DKIM pass(사내 도메인), DMARC pass | SPF none 원인 확인 필요 (`design.md` 8장 17번) |
+| 발신 도메인 인증 (Gmail 원본 보기) | SPF none, DKIM pass(사내 도메인), DMARC pass | SPF none 원인 확인. 조치는 메일 관리자 (`design.md` 8장 17번) |
+| envelope 발신자 (`Return-Path`) | 빈 값 `<>`. Tool 이 보낸 값은 릴레이 헤더 `X-MAIL-FROM`에 남음 | 반송 수신 여부 확인 필요 |
+| 릴레이가 추가한 헤더 | `X-RECEIVED-IP`, `Received`에 Tool 송신 IP 기록 | 외부 노출 여부 확인 필요 (`design.md` 8장 18번) |
 | `smtp_auth=login` 오설정 | `AUTH_FAILED` "지원하는 로그인 방식이 없습니다" | `interface.md` 5.2 반영 |
 | k8s 샌드박스 송신 IP 허용 | 미실행 | 샌드박스 실행 필요 (`design.md` 8장 15번) |
 
-**SPF none.** 사내 도메인의 공개 SPF 레코드에는 릴레이 IP가 들어 있는데도 Gmail은 SPF를 none으로 판정했다.
-SPF는 헤더 From이 아니라 envelope 발신 주소(Return-Path)의 도메인으로 평가한다.
-릴레이가 Return-Path를 SPF 레코드가 없는 다른 도메인으로 바꿨을 것으로 추정하며, 원본의 `Return-Path`로 확인한다.
+**SPF none (원인 확인).** 사내 도메인의 공개 SPF 레코드에는 릴레이 IP가 들어 있는데도 Gmail은 SPF를 none으로 판정했다.
+수신 헤더의 `Return-Path`가 `<>`(빈 발신자)였다. Tool 은 MAIL FROM 에 `smtp_username`을 보냈지만(릴레이 헤더 `X-MAIL-FROM`),
+릴레이가 외부로 중계하면서 envelope 발신자를 비웠다. 빈 발신자의 SPF 는 HELO 이름(릴레이 호스트명)으로 평가하는데,
+그 호스트명에는 SPF 레코드가 없어 none 이 됐다(`Received-SPF`). Tool 쪽 원인이 아니다.
 DMARC는 DKIM(사내 도메인 서명, From과 정렬)으로 통과했다. 사내 도메인의 DMARC 정책이 `quarantine`이므로,
 릴레이의 DKIM 서명이 빠지면 외부 수신자에게 스팸으로 분류될 수 있다.
+
+**빈 envelope 발신자의 영향.** 빈 발신자는 원래 반송 메일(DSN) 전용이다.
+
+- 반송: 수신 측이 배달 뒤 반송을 보내려 해도 받을 주소가 없다. `interface.md` 4.2의 "반송은 발신 주소로 도착한다"가
+  사내 릴레이에서는 성립하지 않을 수 있다. 없는 주소로 보내 반송이 오는지 시험해 확인한다(확인 필요).
+- 조치는 메일 관리자 쪽이다. 릴레이가 원래 envelope 발신자를 유지하게 하거나, 릴레이 호스트명에 SPF 레코드를 추가한다.
+
+**릴레이가 추가하는 헤더.** 릴레이가 `X-RECEIVED-IP`, `Received` 헤더에 Tool 의 송신 IP를 적어 외부 수신자에게 보낸다.
+k8s 에서는 클러스터 송신 IP가 노출된다. Tool 이 Message-ID·EHLO 에서 Pod 이름을 빼는 것(`design.md` 4.7)과 별개로,
+릴레이 설정에서 이 헤더를 뺄지 메일 관리자와 정한다.
 
 ### 3.5. F-05 수신자 통제
 
